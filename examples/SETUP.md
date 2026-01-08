@@ -33,7 +33,7 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-> **Note:** You'll see `(venv)` appear at the start of your terminal prompt. This means the virtual environment is active.
+> **Note:** You will see `(venv)` appear at the start of your terminal prompt. This means the virtual environment is active.
 
 ### Step 4: Install dependencies
 
@@ -78,7 +78,7 @@ python demo.py "नमस्ते"
 
 ## Running the Demo Again (After Initial Setup)
 
-If you've already done the setup and want to run the demo again:
+If you have already completed the setup and want to run the demo again:
 
 ```bash
 cd /home/arag/livekit-plugins-luna
@@ -104,7 +104,6 @@ The demo saves audio files with timestamps:
 ```
 output_20260108_113059.wav
 output_20260108_113215.wav
-...
 ```
 
 You can play these files with any audio player.
@@ -135,14 +134,13 @@ Make sure you ran `pip install -e .` from the plugin folder.
 Check your internet connection. The demo requires access to https://hindi.heypixa.ai
 
 ### Virtual environment not activating
-Make sure you're using the correct command:
+Make sure you are using the correct command:
 - Linux/Mac: `source venv/bin/activate`
 - Windows: `venv\Scripts\activate`
 
 ---
 
-## Need Help?
+## References
 
 - Luna TTS API Documentation: https://hindi.heypixa.ai/docs
 - LiveKit Agents Documentation: https://docs.livekit.io/agents/
-
