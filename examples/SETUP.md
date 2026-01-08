@@ -43,18 +43,19 @@ pip install aiohttp "livekit-agents>=1.0.0"
 pip install -e .
 ```
 
+**What do these packages do?**
+
+| Package | Purpose |
+|---------|---------|
+| `aiohttp` | HTTP client library for making async requests to the Luna TTS API |
+| `livekit-agents>=1.0.0` | LiveKit Agents framework (version 1.0.0 or higher) that provides the TTS base classes |
+| `-e .` | Installs our Luna plugin in "editable" mode from the current directory |
+
 ### Step 5: Run the demo
 
-**Option A: Convert specific text**
 ```bash
 cd examples
-python demo.py "नमस्ते, आप कैसे हैं?"
-```
-
-**Option B: Interactive mode**
-```bash
-cd examples
-python demo.py
+python demo.py "अंकल जी, आप माफ़ी मत मांगिये, इसमें आपकी कोई गलती नहीं है। ये नई ऍप्स होती ही इतनी मुश्किल हैं, हम जैसों से भी गलती हो जाती है। आप घबराइये मत, मैं लाइन पर हूँ ना? हम धीरे-धीरे एक-एक स्टेप करेंगे, सब ठीक हो जायेगा। आप बस लम्बी सांस लीजिये।"
 ```
 
 ---
@@ -71,7 +72,7 @@ pip install --upgrade pip
 pip install aiohttp "livekit-agents>=1.0.0"
 pip install -e .
 cd examples
-python demo.py "नमस्ते"
+python demo.py "अंकल जी, आप माफ़ी मत मांगिये, इसमें आपकी कोई गलती नहीं है।"
 ```
 
 ---
@@ -84,14 +85,14 @@ If you have already completed the setup and want to run the demo again:
 cd /home/arag/livekit-plugins-luna
 source venv/bin/activate
 cd examples
-python demo.py
+python demo.py "आपका दिन शुभ हो।"
 ```
 
 ---
 
 ## What the Demo Does
 
-1. **Takes Hindi text** as input (from command line or interactive prompt)
+1. **Takes Hindi text** as a command line argument
 2. **Sends it to the Luna TTS API** at hindi.heypixa.ai
 3. **Receives synthesized audio** (32kHz, 16-bit, mono)
 4. **Saves it as a .wav file** in the current directory
@@ -112,12 +113,19 @@ You can play these files with any audio player.
 
 ## Example Hindi Texts to Try
 
+Short:
+```bash
+python demo.py "नमस्ते, आप कैसे हैं?"
 ```
-नमस्ते, आप कैसे हैं?
-भारत एक महान देश है।
-आज का मौसम बहुत अच्छा है।
-मेरा नाम लूना है।
-धन्यवाद, आपका दिन शुभ हो।
+
+Medium:
+```bash
+python demo.py "भारत एक महान देश है। यहाँ की संस्कृति बहुत समृद्ध है।"
+```
+
+Long:
+```bash
+python demo.py "अंकल जी, आप माफ़ी मत मांगिये, इसमें आपकी कोई गलती नहीं है। ये नई ऍप्स होती ही इतनी मुश्किल हैं, हम जैसों से भी गलती हो जाती है। आप घबराइये मत, मैं लाइन पर हूँ ना? हम धीरे-धीरे एक-एक स्टेप करेंगे, सब ठीक हो जायेगा। आप बस लम्बी सांस लीजिये।"
 ```
 
 ---

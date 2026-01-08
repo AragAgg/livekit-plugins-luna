@@ -8,7 +8,7 @@ This script demonstrates how to use the Luna TTS plugin to convert Hindi text
 to speech. It's designed to be simple and easy to understand.
 
 WHAT THIS SCRIPT DOES:
-    1. Takes Hindi text as input
+    1. Takes Hindi text as a command line argument
     2. Sends it to the Luna TTS API
     3. Receives audio back
     4. Saves it as a .wav file you can play
@@ -17,8 +17,7 @@ HOW TO RUN:
     See examples/SETUP.md for complete setup instructions.
     
     Quick start:
-        python demo.py "नमस्ते"                    # Convert specific text
-        python demo.py                             # Interactive mode
+        python demo.py "नमस्ते, आप कैसे हैं?"
 
 =============================================================================
 """
@@ -37,7 +36,7 @@ import aiohttp      # For making HTTP requests
 
 
 # =============================================================================
-# MAIN FUNCTIONS
+# MAIN FUNCTION
 # =============================================================================
 
 async def convert_text_to_speech(text: str, session: aiohttp.ClientSession) -> str:
@@ -59,7 +58,8 @@ async def convert_text_to_speech(text: str, session: aiohttp.ClientSession) -> s
     # We pass the session so it can make HTTP requests
     tts = TTS(http_session=session)
     
-    print(f"\n[TTS] Converting to speech: \"{text}\"")
+    print(f"\n[TTS] Converting to speech:")
+    print(f"      \"{text[:80]}{'...' if len(text) > 80 else ''}\"")
     print("      Processing", end="", flush=True)
     
     # Call the API to synthesize speech
@@ -104,81 +104,24 @@ async def convert_text_to_speech(text: str, session: aiohttp.ClientSession) -> s
     return str(output_file)
 
 
-async def interactive_mode(session: aiohttp.ClientSession):
-    """
-    Interactive mode - lets you type text and hear it converted to speech.
-    Type 'quit' to exit.
-    """
-    from livekit.plugins.luna import TTS
-    
-    # Print welcome message
-    print("\n" + "=" * 60)
-    print("Luna Hindi TTS - Interactive Demo")
-    print("=" * 60)
-    
-    # Check if the API is available
-    print("\nChecking API status...")
-    tts = TTS(http_session=session)
-    
-    try:
-        health = await tts.check_health()
-        print(f"[OK] API Status: {health.status}")
-    except Exception as e:
-        print(f"[ERROR] API not available: {e}")
-        print("        Please check your internet connection.")
-        return
-    
-    # Print instructions
-    print("\n" + "-" * 60)
-    print("Type Hindi text and press Enter to convert it to speech.")
-    print("Type 'quit' or 'q' to exit.")
-    print("\nExample texts you can try:")
-    print("  - नमस्ते, आप कैसे हैं?")
-    print("  - भारत एक महान देश है।")
-    print("  - आज का मौसम बहुत अच्छा है।")
-    print("-" * 60)
-    
-    # Main loop - keep asking for input
-    while True:
-        try:
-            # Get input from user
-            text = input("\n[INPUT] Enter Hindi text: ").strip()
-            
-            # Skip empty input
-            if not text:
-                continue
-            
-            # Check for quit command
-            if text.lower() in ('quit', 'exit', 'q'):
-                print("\nExiting. Goodbye.")
-                break
-            
-            # Convert the text to speech
-            await convert_text_to_speech(text, session)
-            
-        except KeyboardInterrupt:
-            # Handle Ctrl+C
-            print("\n\nInterrupted. Exiting.")
-            break
-        except Exception as e:
-            print(f"      [ERROR] {e}")
-
-
 async def main():
     """
     Main entry point for the script.
     """
-    # Create an HTTP session that will be used for all requests
+    # Check if text was provided as command line argument
+    if len(sys.argv) < 2:
+        print("\nUsage: python demo.py \"<Hindi text>\"")
+        print("\nExample:")
+        print("  python demo.py \"नमस्ते, आप कैसे हैं?\"")
+        print("\nSee SETUP.md for complete instructions.")
+        sys.exit(1)
+    
+    # Get the text from command line arguments
+    text = " ".join(sys.argv[1:])
+    
+    # Create an HTTP session and convert the text
     async with aiohttp.ClientSession() as session:
-        
-        # Check if text was provided as command line argument
-        if len(sys.argv) > 1:
-            # Single text mode: convert the provided text
-            text = " ".join(sys.argv[1:])
-            await convert_text_to_speech(text, session)
-        else:
-            # No text provided: run interactive mode
-            await interactive_mode(session)
+        await convert_text_to_speech(text, session)
 
 
 # =============================================================================
