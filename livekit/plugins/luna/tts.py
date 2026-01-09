@@ -458,13 +458,13 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                     async for data in self._input_ch:
                         if isinstance(data, self._FlushSentinel):
-                            # Flush: send accumulated text as final
+                            # Flush: send accumulated text for synthesis
                             if text_buffer:
                                 await ws.send_json(
                                     {
                                         "type": "text",
                                         "content": text_buffer,
-                                        "is_final": True,
+                                        "is_final": False,  # Not final until end_input
                                     }
                                 )
                                 text_buffer = ""
@@ -473,7 +473,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                             if not data:
                                 continue
 
-                            # Accumulate text
+                            # Accumulate text (don't send immediately)
                             text_buffer += data
                             total_chars += len(data)
                             self._mark_started()
@@ -485,16 +485,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                                     f"recommended limit of {MAX_TEXT_LENGTH} chars"
                                 )
 
-                            # Send text chunk (not final)
-                            await ws.send_json(
-                                {
-                                    "type": "text",
-                                    "content": data,
-                                    "is_final": False,
-                                }
-                            )
-
-                    # End of input - send final text if any remains
+                    # End of input - send any remaining text and signal completion
                     if text_buffer:
                         await ws.send_json(
                             {
