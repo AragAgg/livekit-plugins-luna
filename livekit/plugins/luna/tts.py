@@ -41,10 +41,12 @@ from livekit.agents import (
     APIError,
     APIStatusError,
     APITimeoutError,
+    tokenize,
     tts,
     utils,
 )
-from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
+from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN, NotGivenOr
+from livekit.agents.utils import is_given
 
 from .log import logger
 
@@ -85,6 +87,7 @@ class _TTSOptions:
     base_url: str
     top_p: float
     repetition_penalty: float
+    sentence_tokenizer: tokenize.SentenceTokenizer
 
     def get_http_url(self, path: str) -> str:
         return f"{self.base_url}{path}"
@@ -120,6 +123,7 @@ class TTS(tts.TTS):
         base_url: str = DEFAULT_BASE_URL,
         top_p: float = DEFAULT_TOP_P,
         repetition_penalty: float = DEFAULT_REPETITION_PENALTY,
+        sentence_tokenizer: NotGivenOr[tokenize.SentenceTokenizer] = NOT_GIVEN,
         http_session: aiohttp.ClientSession | None = None,
     ) -> None:
         """
@@ -132,6 +136,8 @@ class TTS(tts.TTS):
                    Higher values make output more diverse. Defaults to 0.95.
             repetition_penalty: Penalty for repeating tokens (1.0-2.0).
                                Higher values reduce repetition. Defaults to 1.3.
+            sentence_tokenizer: Tokenizer to batch incoming text into sentences.
+                               Defaults to basic SentenceTokenizer.
             http_session: Optional aiohttp ClientSession to reuse.
                          If not provided, a new session will be created.
         """
@@ -144,10 +150,15 @@ class TTS(tts.TTS):
             num_channels=NUM_CHANNELS,
         )
 
+        # Use basic sentence tokenizer if not provided
+        if not is_given(sentence_tokenizer):
+            sentence_tokenizer = tokenize.basic.SentenceTokenizer()
+
         self._opts = _TTSOptions(
             base_url=base_url,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
+            sentence_tokenizer=sentence_tokenizer,
         )
 
         self._session = http_session
@@ -408,8 +419,8 @@ class SynthesizeStream(tts.SynthesizeStream):
     This uses the WS /api/v1/ws/synthesize endpoint for bidirectional
     streaming of text input and audio output.
 
-    Note: Each SynthesizeStream represents ONE segment. For multiple segments,
-    create multiple SynthesizeStream instances (this is the modern LiveKit pattern).
+    Uses an internal sentence tokenizer to batch incoming tokens into
+    complete sentences before sending to the API (like ElevenLabs/Cartesia).
     """
 
     def __init__(
@@ -421,6 +432,12 @@ class SynthesizeStream(tts.SynthesizeStream):
         super().__init__(tts=tts, conn_options=conn_options)
         self._tts: TTS = tts
         self._opts = replace(tts._opts)
+        # Create sentence tokenizer stream to batch incoming tokens
+        self._sentence_stream = self._opts.sentence_tokenizer.stream()
+
+    async def aclose(self) -> None:
+        await self._sentence_stream.aclose()
+        await super().aclose()
 
     async def _run(self, output_emitter: tts.AudioEmitter) -> None:
         """Execute the WebSocket TTS session."""
@@ -451,58 +468,40 @@ class SynthesizeStream(tts.SynthesizeStream):
                     }
                 )
 
-                # Task to send text chunks from input channel
-                async def send_text() -> None:
-                    text_buffer = ""
-                    total_chars = 0
-
+                # Task to process input and feed sentence tokenizer
+                async def process_input() -> None:
                     async for data in self._input_ch:
                         if isinstance(data, self._FlushSentinel):
-                            # Flush: send accumulated text for synthesis
-                            if text_buffer:
-                                await ws.send_json(
-                                    {
-                                        "type": "text",
-                                        "content": text_buffer,
-                                        "is_final": False,  # Not final until end_input
-                                    }
-                                )
-                                text_buffer = ""
+                            # Flush the sentence tokenizer
+                            self._sentence_stream.flush()
                         else:
-                            # Skip empty chunks
-                            if not data:
-                                continue
+                            if data:
+                                self._sentence_stream.push_text(data)
+                                self._mark_started()
+                    # End the sentence tokenizer input
+                    self._sentence_stream.end_input()
 
-                            # Accumulate text (don't send immediately)
-                            text_buffer += data
-                            total_chars += len(data)
-                            self._mark_started()
+                # Task to send complete sentences to WebSocket
+                async def send_sentences() -> None:
+                    async for sentence_event in self._sentence_stream:
+                        sentence = sentence_event.token
+                        if sentence and sentence.strip():
+                            await ws.send_json(
+                                {
+                                    "type": "text",
+                                    "content": sentence,
+                                    "is_final": False,
+                                }
+                            )
 
-                            # Warn if approaching limit
-                            if total_chars > MAX_TEXT_LENGTH:
-                                logger.warning(
-                                    f"Total streamed text ({total_chars} chars) exceeds "
-                                    f"recommended limit of {MAX_TEXT_LENGTH} chars"
-                                )
-
-                    # End of input - send any remaining text and signal completion
-                    if text_buffer:
-                        await ws.send_json(
-                            {
-                                "type": "text",
-                                "content": text_buffer,
-                                "is_final": True,
-                            }
-                        )
-                    else:
-                        # Send empty final to signal end
-                        await ws.send_json(
-                            {
-                                "type": "text",
-                                "content": "",
-                                "is_final": True,
-                            }
-                        )
+                    # Send final signal
+                    await ws.send_json(
+                        {
+                            "type": "text",
+                            "content": "",
+                            "is_final": True,
+                        }
+                    )
 
                 # Task to receive audio from WebSocket
                 async def receive_audio() -> None:
@@ -536,16 +535,17 @@ class SynthesizeStream(tts.SynthesizeStream):
                 # Start the segment (one segment per stream)
                 output_emitter.start_segment(segment_id=segment_id)
 
-                # Run both tasks concurrently
-                send_task = asyncio.create_task(send_text(), name="luna_send_text")
-                receive_task = asyncio.create_task(receive_audio(), name="luna_receive_audio")
+                # Run all tasks concurrently
+                input_task = asyncio.create_task(process_input(), name="luna_input")
+                send_task = asyncio.create_task(send_sentences(), name="luna_send")
+                receive_task = asyncio.create_task(receive_audio(), name="luna_receive")
 
                 try:
-                    await asyncio.gather(send_task, receive_task)
+                    await asyncio.gather(input_task, send_task, receive_task)
                 finally:
-                    # Always end segment and cancel tasks (matches ElevenLabs pattern)
+                    # Always end segment and cancel tasks
                     output_emitter.end_segment()
-                    await utils.aio.gracefully_cancel(send_task, receive_task)
+                    await utils.aio.gracefully_cancel(input_task, send_task, receive_task)
 
         except asyncio.TimeoutError:
             raise APITimeoutError() from None
