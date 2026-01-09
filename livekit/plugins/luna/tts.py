@@ -268,6 +268,8 @@ class TTS(tts.TTS):
         Raises:
             ValueError: If text exceeds MAX_TEXT_LENGTH (5000 chars).
         """
+        if not text or not text.strip():
+            raise ValueError("Text cannot be empty")
         if len(text) > MAX_TEXT_LENGTH:
             raise ValueError(
                 f"Text exceeds maximum length of {MAX_TEXT_LENGTH} characters "
@@ -405,6 +407,9 @@ class SynthesizeStream(tts.SynthesizeStream):
 
     This uses the WS /api/v1/ws/synthesize endpoint for bidirectional
     streaming of text input and audio output.
+
+    Note: Each SynthesizeStream represents ONE segment. For multiple segments,
+    create multiple SynthesizeStream instances (this is the modern LiveKit pattern).
     """
 
     def __init__(
@@ -422,6 +427,7 @@ class SynthesizeStream(tts.SynthesizeStream):
         session = self._tts._ensure_session()
         ws_url = self._opts.get_ws_url("/api/v1/ws/synthesize")
         request_id = utils.shortuuid()
+        segment_id = utils.shortuuid()
 
         output_emitter.initialize(
             request_id=request_id,
@@ -430,9 +436,6 @@ class SynthesizeStream(tts.SynthesizeStream):
             mime_type="audio/pcm",
             stream=True,
         )
-
-        segment_id = utils.shortuuid()
-        text_buffer = ""
 
         try:
             async with session.ws_connect(
@@ -450,11 +453,12 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                 # Task to send text chunks from input channel
                 async def send_text() -> None:
-                    nonlocal text_buffer, segment_id
+                    text_buffer = ""
+                    total_chars = 0
 
                     async for data in self._input_ch:
                         if isinstance(data, self._FlushSentinel):
-                            # Flush: send accumulated text as final and start new segment
+                            # Flush: send accumulated text as final
                             if text_buffer:
                                 await ws.send_json(
                                     {
@@ -464,14 +468,22 @@ class SynthesizeStream(tts.SynthesizeStream):
                                     }
                                 )
                                 text_buffer = ""
-
-                            # Start a new segment for next text
-                            output_emitter.start_segment(segment_id=segment_id)
-                            segment_id = utils.shortuuid()
                         else:
+                            # Skip empty chunks
+                            if not data:
+                                continue
+
                             # Accumulate text
                             text_buffer += data
+                            total_chars += len(data)
                             self._mark_started()
+
+                            # Warn if approaching limit
+                            if total_chars > MAX_TEXT_LENGTH:
+                                logger.warning(
+                                    f"Total streamed text ({total_chars} chars) exceeds "
+                                    f"recommended limit of {MAX_TEXT_LENGTH} chars"
+                                )
 
                             # Send text chunk (not final)
                             await ws.send_json(
@@ -503,8 +515,6 @@ class SynthesizeStream(tts.SynthesizeStream):
 
                 # Task to receive audio from WebSocket
                 async def receive_audio() -> None:
-                    nonlocal segment_id
-
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.BINARY:
                             # Raw PCM16 audio
@@ -515,7 +525,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                                 msg_type = data.get("type")
 
                                 if msg_type == "done":
-                                    output_emitter.end_input()
+                                    # Stream complete
                                     break
                                 elif msg_type == "error":
                                     raise APIError(data.get("message", "Unknown error"))
@@ -532,7 +542,7 @@ class SynthesizeStream(tts.SynthesizeStream):
                             logger.warning(f"WebSocket closed: {msg.type}")
                             break
 
-                # Start the first segment
+                # Start the segment (one segment per stream)
                 output_emitter.start_segment(segment_id=segment_id)
 
                 # Run both tasks concurrently
@@ -542,6 +552,8 @@ class SynthesizeStream(tts.SynthesizeStream):
                 try:
                     await asyncio.gather(send_task, receive_task)
                 finally:
+                    # Always end segment and cancel tasks (matches ElevenLabs pattern)
+                    output_emitter.end_segment()
                     await utils.aio.gracefully_cancel(send_task, receive_task)
 
         except asyncio.TimeoutError:
